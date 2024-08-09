@@ -1,0 +1,11 @@
+
+This application expects that the PS Move API has been
+build in "build/" in the root source folder.
+
+After you have built the PS Move API in this way, source ROS 1
+and create a local build folder (e.g. ros/build/). In the build
+ folder, type `cmake ..`and then `make`
+
+Additional requirements:
+  ROS 1 (tested with ROS Noetic)
+
