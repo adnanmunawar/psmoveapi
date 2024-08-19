@@ -33,9 +33,18 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 
 #include "psmove_tracker_opencv.h"
 #include "psmove_fusion.h"
+
+#include <ros/ros.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <sensor_msgs/Joy.h>
+
+#define MAX_CONTROLLERS 5
+
+using namespace std;
 
 extern "C" {
     void cvShowImage(const char *, void*);
@@ -137,18 +146,72 @@ void transMat2Pos(float* mat, float* pos){
     pos[2] = mat[14];
 }
 
-class Tracker
+class Tracker{
+	public:
+	Tracker(){
+
+	}
+
+	~Tracker(){
+		if (m_tracker)
+			psmove_tracker_free(m_tracker);
+	}
+
+	bool init(){
+		if (! m_initialized){
+	        m_tracker = psmove_tracker_new();
+			if (m_tracker == NULL){
+				printf("ERROR! NO COMPATIBLE TRACKER FOUND \n");
+				return 0;
+			}
+			m_initialized = true;
+		}
+		return true;
+	}
+
+	unsigned int getControllerCount(){
+		if (!m_initialized){
+			printf("ERROR! TRACKER NOT INITIALIZED \n");
+			return 0;
+		}
+		return psmove_count_connected();
+	}
+
+	PSMoveTracker* getTracker(){
+		return m_tracker;
+	}
+
+private: 
+    PSMoveTracker *m_tracker;
+	bool m_initialized;
+};
+
+class Controller
 {
     public:
-        Tracker(){
-            m_move = psmove_connect();
+		Controller(int index): m_index(index){
+			m_quaternion = new float[4];
+            m_position = new float[3];
+			m_initialized = false;
+			m_move = nullptr;
+		}
+
+		~Controller(){
+			if (m_move)
+				psmove_disconnect(m_move);
+		}
+
+		bool init(Tracker* tracker){
+			m_tracker = tracker->getTracker();
+			bool valid = true;
+			m_move = psmove_connect_by_id(m_index);
             int quit = 0;
 
             if (m_move == NULL) {
                 fprintf(stderr, "INFO! Could not connect to controller.\n");
+				valid = false;
+				return valid;
             }
-
-            m_tracker = psmove_tracker_new();
 
             while (psmove_tracker_enable(m_tracker, m_move) != Tracker_CALIBRATED) {
                 // Retry calibration until it works
@@ -157,13 +220,16 @@ class Tracker
             psmove_enable_orientation(m_move, true);
 
             m_fusion = psmove_fusion_new(m_tracker, 0.1, 100);
-
-            m_quaternion = new float[4];
-            m_position = new float[3];
-        }
+			m_initialized = true;
+			return valid;
+		}
 
         void update()
-        {
+        {	
+			if (!m_initialized){
+				printf("ERROR! CONTROLLER AT INDEX %d NOT INITIALIZED, IGNORING UPDATE\n", m_index);
+				return;
+			}
             while (psmove_poll(m_move)) {
                 if (psmove_get_buttons(m_move) & Btn_PS) {
                     break;
@@ -183,10 +249,6 @@ class Tracker
             cvShowImage("asdf", psmove_tracker_opencv_get_frame(m_tracker));
         }
 
-        void cleanup(){
-            psmove_tracker_free(m_tracker);
-            psmove_disconnect(m_move);
-        }
 public:
     float* m_quaternion;
     float* m_position;
@@ -194,7 +256,130 @@ public:
 
 private:
     PSMove *m_move;
-    PSMoveTracker *m_tracker;
+	PSMoveTracker* m_tracker;
     PSMoveFusion* m_fusion;
+	const int m_index;
+	bool m_initialized;
+};
+
+class ControllerROSInterface{
+	public:
+		ControllerROSInterface(Controller* controller, ros::NodeHandle* node, string a_namespace, string a_name){
+			if (!controller){
+				return;
+			}
+			m_controller = controller;
+			string prefix = a_namespace + a_name;
+			m_posePub = node->advertise<geometry_msgs::PoseStamped>(prefix + "/pose", 1);
+			m_joyPub = node->advertise<sensor_msgs::Joy>(prefix + "/joy", 1);
+		}
+
+		~ControllerROSInterface(){
+			if (m_controller) delete m_controller;
+		}
+
+		void update(){
+			m_controller->update();
+		}
+
+		void publish(){
+			geometry_msgs::PoseStamped pose_msg;
+			pose_msg.header.frame_id = "map";
+        	pose_msg.header.stamp = ros::Time::now();
+        	pose_msg.pose.position.x = m_controller->m_position[0];
+        	pose_msg.pose.position.y = m_controller->m_position[1];
+        	pose_msg.pose.position.z = m_controller->m_position[2];
+
+        	pose_msg.pose.orientation.w = m_controller->m_quaternion[0];
+        	pose_msg.pose.orientation.x = m_controller->m_quaternion[1];
+        	pose_msg.pose.orientation.y = m_controller->m_quaternion[2];
+        	pose_msg.pose.orientation.z = m_controller->m_quaternion[3];
+
+        	m_posePub.publish(pose_msg);
+
+		}
+
+	private:
+		ros::Publisher m_posePub;
+		ros::Publisher m_joyPub;
+		Controller* m_controller;
+};
+
+class ROSMoveManager{
+	public:
+		ROSMoveManager(Tracker* tracker, int argc, char** argv, string node_name = "psmove_ros"){
+			m_addedControllers = 0;
+			m_tracker = tracker;
+
+			ros::init(argc, argv, node_name);
+			m_node = new ros::NodeHandle();
+			m_loopRate = new ros::Rate(120);
+
+			m_indexToString[0] = "zero";
+			m_indexToString[1] = "one";
+			m_indexToString[2] = "two";
+			m_indexToString[3] = "three";
+			m_indexToString[4] = "four";
+			m_indexToString[5] = "five";
+		}
+
+		~ROSMoveManager(){
+			if (m_tracker) delete m_tracker;
+			if (m_loopRate) delete m_loopRate;
+			for (auto it : m_controllerROSInterfaces){
+				delete it;
+			}
+			if (m_node) delete m_node;
+		}
+
+		unsigned int getControllerCount(){
+			return psmove_count_connected();
+		}
+
+		bool addController(unsigned int index, string a_namespace="", string a_name=""){
+
+			if (! (index < MAX_CONTROLLERS)){
+				printf("ERROR! ONLY CONTROLLER INDEXES UPTO %d ARE SUPPORTED \n", MAX_CONTROLLERS-1);
+				return false;
+			}
+
+			bool success = false;
+
+			if (getControllerCount() > 0){
+				Controller* cont = new Controller(index);
+				if (cont->init(m_tracker)){
+					if (a_namespace.empty()) a_namespace = "/psmove/";
+					if (a_name.empty()) a_name = m_indexToString[index+1];
+					ControllerROSInterface* contIfc = new ControllerROSInterface(cont, m_node, a_namespace, a_name);
+					m_controllerROSInterfaces.push_back(contIfc);
+					success = true;
+				}
+			}
+			return success;
+		}
+
+		bool addAllControllers(){
+			bool success = false;
+			for (unsigned int i = 0 ; i < getControllerCount() ; i++){
+				success |= addController(i);
+			}
+			return success;
+		}
+
+		void update(){
+			for (auto it : m_controllerROSInterfaces){
+				it->update();
+				it->publish();
+			}
+			m_loopRate->sleep();
+		}
+
+	private:
+		Tracker* m_tracker;
+		vector<ControllerROSInterface*> m_controllerROSInterfaces;
+		unsigned int m_addedControllers;
+		ros::NodeHandle* m_node;
+		ros::Rate* m_loopRate;
+		map<unsigned int, string> m_indexToString;
 };
 

@@ -27,44 +27,32 @@
  * POSSIBILITY OF SUCH DAMAGE.
  **/
 
-#include "tracker.h"
+#include "ros_move_interface.h"
 #include <iostream>
 #include <stdio.h>
-#include <ros/ros.h>
-#include <geometry_msgs/PoseStamped.h>
 
 using namespace std;
 
 int main(int argc, char **argv){
-    printf("All Well \n");
+    printf("INFO! PSMOVE ROS. LET\'S SEE WHAT WE CAN DO \n");
 
     Tracker tracker;
-
-    ros::init(argc, argv, "psmove_ros");
-    ros::NodeHandle nh;
-    ros::Publisher con_pub = nh.advertise<geometry_msgs::PoseStamped>("/psmove/left/pose", 1);
-    geometry_msgs::PoseStamped pose_msg;
-    ros::Rate loop_rate(60);
-
-    while(ros::ok()){
-        tracker.update();
-        pose_msg.header.frame_id = "World";
-        pose_msg.header.stamp = ros::Time::now();
-        pose_msg.pose.position.x = tracker.m_position[0];
-        pose_msg.pose.position.y = tracker.m_position[1];
-        pose_msg.pose.position.z = tracker.m_position[2];
-
-        pose_msg.pose.orientation.w = tracker.m_quaternion[0];
-        pose_msg.pose.orientation.x = tracker.m_quaternion[1];
-        pose_msg.pose.orientation.y = tracker.m_quaternion[2];
-        pose_msg.pose.orientation.z = tracker.m_quaternion[3];
-
-        con_pub.publish(pose_msg);
-
-        loop_rate.sleep();
+    if (!tracker.init()){
+        printf("ERROR! CAN\'T INITIALIZE THE TRACKER \n");
+        return -1;
     }
 
-    tracker.cleanup();
+    ROSMoveManager rosMoveManager(&tracker, argc, argv);
+
+    if (!rosMoveManager.addAllControllers()){
+        printf("ERROR! COULD NOT ADD ANY CONTROLLERS \n");
+        return -1;
+    }
+
+    while(ros::ok()){
+        rosMoveManager.update();
+    }
+
     printf("Goodbye \n");
 }
 

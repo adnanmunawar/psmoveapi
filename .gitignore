@@ -7,3 +7,11 @@ external/opencv
 __pycache__
 docs/_build
 /upload
+
+examples/labs/ros/build/
+
+*.user
+
+CMakeCache.txt
+
+.vscode/
