@@ -231,10 +231,12 @@ class Controller
 				return;
 			}
             while (psmove_poll(m_move)) {
-                if (psmove_get_buttons(m_move) & Btn_PS) {
+				m_buttons = psmove_get_buttons(m_move);
+				m_trigger = (int)psmove_get_trigger(m_move) / 255.0;
+                if (m_buttons & Btn_PS) {
                     break;
                 }
-                if (psmove_get_buttons(m_move) & Btn_MOVE) {
+                if (m_buttons & Btn_MOVE) {
                     psmove_reset_orientation(m_move);
                 }
                 psmove_get_orientation(m_move, &m_quaternion[0], &m_quaternion[1], &m_quaternion[2], &m_quaternion[3]);
@@ -253,6 +255,8 @@ public:
     float* m_quaternion;
     float* m_position;
     float* m_modelViewMat;
+	float m_trigger;
+	int m_buttons;
 
 private:
     PSMove *m_move;
@@ -296,6 +300,14 @@ class ControllerROSInterface{
         	pose_msg.pose.orientation.z = m_controller->m_quaternion[3];
 
         	m_posePub.publish(pose_msg);
+
+			sensor_msgs::Joy joy_msg;
+			joy_msg.header.frame_id = "map";
+        	joy_msg.header.stamp = ros::Time::now();
+			joy_msg.axes.push_back(m_controller->m_trigger);
+			joy_msg.buttons.push_back(m_controller->m_buttons);
+
+			m_joyPub.publish(joy_msg);
 
 		}
 
