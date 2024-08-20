@@ -169,12 +169,10 @@ class Tracker{
 		return true;
 	}
 
-	unsigned int getControllerCount(){
-		if (!m_initialized){
-			printf("ERROR! TRACKER NOT INITIALIZED \n");
-			return 0;
-		}
-		return psmove_count_connected();
+	void update(){
+		psmove_tracker_update_image(m_tracker);
+        psmove_tracker_update(m_tracker, NULL);
+        cvShowImage("asdf", psmove_tracker_opencv_get_frame(m_tracker));
 	}
 
 	PSMoveTracker* getTracker(){
@@ -213,14 +211,45 @@ class Controller
 				return valid;
             }
 
-            while (psmove_tracker_enable(m_tracker, m_move) != Tracker_CALIBRATED) {
-                // Retry calibration until it works
+			char *serial = psmove_get_serial(m_move);
+    		printf("INFO! CONNECTED MOVE\'S SERIAL NUMBER : %s\n", serial);
+    		psmove_free_mem(serial);
+
+			PSMove_Connection_Type ctype = psmove_connection_type(m_move);
+    		switch (ctype) {
+			case Conn_USB:
+				printf("Connected via USB.\n");
+				break;
+			case Conn_Bluetooth:
+				printf("Connected via Bluetooth.\n");
+				break;
+			case Conn_Unknown:
+				printf("Unknown connection type.\n");
+				break;
+    		}
+
+			PSMove_Battery_Level battery = psmove_get_battery(m_move);
+
+			if (battery == Batt_CHARGING) {
+                printf("INFO! Battery Charging\n");
+            } else if (battery == Batt_CHARGING_DONE) {
+                printf("INFO! Battery Fully Charged (On Charger)\n");
+            } else if (battery >= Batt_MIN && battery <= Batt_MAX) {
+                printf("INFO! Battery Level: %d / %d\n", battery, Batt_MAX);
+            } else {
+                printf("INFO! Battery Level: unknown (%x)\n", battery);
+            }
+
+            if (psmove_tracker_enable(m_tracker, m_move) != Tracker_CALIBRATED){
+                printf("WARNING! COULD NOT CALIBRATE CONTROLLER %d, IGNORING! \n", m_index);
+                return false;
             }
 
             psmove_enable_orientation(m_move, true);
 
             m_fusion = psmove_fusion_new(m_tracker, 0.1, 100);
 			m_initialized = true;
+			printf("********************\n");
 			return valid;
 		}
 
@@ -246,9 +275,6 @@ class Controller
                 //                transMat2Quat(m_modelViewMat, m_quaternion);
                 transMat2Pos(m_modelViewMat, m_position);
             }
-            psmove_tracker_update_image(m_tracker);
-            psmove_tracker_update(m_tracker, NULL);
-            cvShowImage("asdf", psmove_tracker_opencv_get_frame(m_tracker));
         }
 
 public:
@@ -348,7 +374,19 @@ class ROSMoveManager{
 			return psmove_count_connected();
 		}
 
-		bool addController(unsigned int index, string a_namespace="", string a_name=""){
+        bool addControllerROSInterface(Controller* controller, string a_namespace, string a_name){
+
+			bool success = false;
+
+			if (controller->init(m_tracker)){
+				ControllerROSInterface* contIfc = new ControllerROSInterface(controller, m_node, a_namespace, a_name);
+				m_controllerROSInterfaces.push_back(contIfc);
+				success = true;
+			}
+			return success;
+		}
+
+        bool addControllerROSInterface(unsigned int index, string a_namespace="/psmove", string a_name=""){
 
 			if (! (index < MAX_CONTROLLERS)){
 				printf("ERROR! ONLY CONTROLLER INDEXES UPTO %d ARE SUPPORTED \n", MAX_CONTROLLERS-1);
@@ -358,22 +396,17 @@ class ROSMoveManager{
 			bool success = false;
 
 			if (getControllerCount() > 0){
-				Controller* cont = new Controller(index);
-				if (cont->init(m_tracker)){
-					if (a_namespace.empty()) a_namespace = "/psmove/";
-					if (a_name.empty()) a_name = m_indexToString[index+1];
-					ControllerROSInterface* contIfc = new ControllerROSInterface(cont, m_node, a_namespace, a_name);
-					m_controllerROSInterfaces.push_back(contIfc);
-					success = true;
-				}
+				Controller* controller = new Controller(index);
+				if (a_name.empty()) a_name = m_indexToString[index+1];
+                success = addControllerROSInterface(controller, a_namespace, a_name);
 			}
 			return success;
 		}
 
-		bool addAllControllers(){
+        bool addAllControllerROSInterfaces(){
 			bool success = false;
 			for (unsigned int i = 0 ; i < getControllerCount() ; i++){
-				success |= addController(i);
+                success |= addControllerROSInterface(i);
 			}
 			return success;
 		}
@@ -383,6 +416,7 @@ class ROSMoveManager{
 				it->update();
 				it->publish();
 			}
+			m_tracker->update();
 			m_loopRate->sleep();
 		}
 

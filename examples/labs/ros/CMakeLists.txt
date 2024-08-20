@@ -11,6 +11,6 @@ include_directories("../../../build")
 
 link_directories("../../../build")
 
-add_executable(psmove_ros main.cpp tracker.h)
+add_executable(psmove_ros main.cpp ros_move_interface.h)
 target_link_libraries(psmove_ros ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} psmoveapi psmoveapi_tracker)
 

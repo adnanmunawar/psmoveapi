@@ -44,7 +44,7 @@ int main(int argc, char **argv){
 
     ROSMoveManager rosMoveManager(&tracker, argc, argv);
 
-    if (!rosMoveManager.addAllControllers()){
+    if (!rosMoveManager.addAllControllerROSInterfaces()){
         printf("ERROR! COULD NOT ADD ANY CONTROLLERS \n");
         return -1;
     }
