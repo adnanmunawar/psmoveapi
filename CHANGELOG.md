@@ -87,7 +87,7 @@ starting after version 4.0.12, but historic entries might not.
 
 ## [4.0.13] - 2024-09-30
 
-- Added ROS application to publish tracker poses and button data.
+- Added ROS application to publish tracker poses and buttons data.
 
 ## [4.0.12] - 2020-12-19
 
