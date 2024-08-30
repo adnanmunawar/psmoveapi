@@ -85,6 +85,10 @@ starting after version 4.0.12, but historic entries might not.
 - Color mappings are not stored persistently anymore, but always re-calibrated at runtime
 - Removed `psmove_util_get_env_string()` from public API
 
+## [4.0.13] - 2024-09-30
+
+- Added ROS application to publish tracker poses and button data.
+
 ## [4.0.12] - 2020-12-19
 
 - Fix flipping of camera image on Linux (by @nitsch)
